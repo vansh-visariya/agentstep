@@ -12,7 +12,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-from agent_replay.sdk.exporter import ReplayOtelExporter
+from agentstep.sdk.exporter import ReplayOtelExporter
 
 tracer_provider = None
 
@@ -36,7 +36,7 @@ class ReplayCallbackHandler(BaseCallbackHandler):
     def __init__(self, thread_id: str, branch_id: str | None = None):
         self.thread_id = thread_id
         self.branch_id = branch_id
-        self.tracer = trace.get_tracer("agent-replay")
+        self.tracer = trace.get_tracer("agentstep")
         self.spans = {}  # run_id -> Span
 
     def _set_branch_attrs(self, span):

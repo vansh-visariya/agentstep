@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:7337',
+      '/api': `http://127.0.0.1:${process.env.BACKEND_PORT || '7337'}`,
     }
   }
 })

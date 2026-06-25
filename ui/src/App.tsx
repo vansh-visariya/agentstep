@@ -298,7 +298,7 @@ export default function App() {
         <div className="px-4 h-12 flex items-center gap-2 border-b" style={{ borderColor: 'var(--color-ink-3)' }}>
           <GitBranch size={15} style={{ color: 'var(--color-orig)' }} />
           <span className="mono text-[12px] font-semibold tracking-wide" style={{ color: 'var(--color-text)' }}>
-            agent-replay
+            agentstep
           </span>
         </div>
         <div className="px-4 pt-4 pb-2"><Eyebrow>Threads</Eyebrow></div>

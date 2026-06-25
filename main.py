@@ -1,5 +1,5 @@
 def main():
-    print("Hello from agent-replay!")
+    print("Hello from agentstep!")
 
 
 if __name__ == "__main__":

@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from agent_replay.server.replayer import replay_branch
-from agent_replay.sdk.tracer import replay_trace
+from agentstep.server.replayer import replay_branch
+from agentstep.sdk.tracer import replay_trace
 
 from langchain_core.messages import ToolMessage, AIMessage
 

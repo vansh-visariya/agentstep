@@ -1,9 +1,33 @@
 [project]
-name = "agent-replay"
-version = "0.1.0"
-description = "Add your description here"
+name = "agentstep"
+version = "0.1.1"
+description = "Time-travel debugger and branch explorer for LangGraph AI agents. Capture execution traces, inspect LLM and tool calls, and branch from any point with overridden outputs."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
+authors = [
+    { name = "vansh visariya", email = "vanshvisariya.workdev@gmail.com" },
+]
+keywords = [
+    "langgraph",
+    "agent",
+    "debugger",
+    "tracing",
+    "otel",
+    "opentelemetry",
+    "llm",
+    "branch",
+    "replay",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+    "Framework :: FastAPI",
+]
 dependencies = [
     "fastapi>=0.138.0",
     "langchain-groq>=1.1.3",
@@ -18,12 +42,17 @@ dependencies = [
     "uvicorn>=0.49.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/vanshvisariya/agentstep"
+Repository = "https://github.com/vanshvisariya/agentstep"
+Issues = "https://github.com/vanshvisariya/agentstep/issues"
+
 [project.scripts]
-replay-debugger = "agent_replay.server.cli:main"
+replay-debugger = "agentstep.server.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_replay"]
+packages = ["src/agentstep"]

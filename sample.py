@@ -12,7 +12,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from agent_replay.sdk.tracer import replay_trace
+from agentstep.sdk.tracer import replay_trace
 
 load_dotenv()
 
