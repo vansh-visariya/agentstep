@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
@@ -46,6 +47,7 @@ def get_traces(thread_id: str, request: Request):
         ORDER BY start_time ASC
     """, (thread_id,))
 
+    rows = cursor.fetchall()
     spans = [
         {
             "span_id": r[0],
@@ -57,10 +59,47 @@ def get_traces(thread_id: str, request: Request):
             "events": json.loads(r[6]) if r[6] else [],
             "status_code": r[7],
         }
-        for r in cursor.fetchall()
+        for r in rows
     ]
 
-    return {"spans": spans}
+    # Group spans by lg.branch_id (original trace has no branch_id)
+    groups: dict[str | None, list] = {}
+    for s in spans:
+        bid = s["attributes"].get("lg.branch_id")
+        if bid not in groups:
+            groups[bid] = []
+        groups[bid].append(s)
+
+    # Order: original first (branch_id=None), then branches by first span's start_time
+    def sort_key(item):
+        bid, spans = item
+        first_ts = spans[0]["start_time"] if spans else 0
+        return (1 if bid is None else 0, first_ts)
+
+    branches = []
+    for bid, branch_spans in sorted(groups.items(), key=sort_key):
+        is_original = bid is None
+
+        # Compute fork_point: the span immediately before this branch's first span
+        fork_point = None
+        if not is_original and branch_spans:
+            for i, s in enumerate(spans):
+                if s["span_id"] == branch_spans[0]["span_id"]:
+                    if i > 0:
+                        fork_point = spans[i - 1]["span_id"]
+                    break
+
+        branches.append({
+            "branch_id": bid if not is_original else "__original__",
+            "is_original": is_original,
+            "spans": branch_spans,
+            "meta": {
+                "span_count": len(branch_spans),
+                "fork_point": fork_point,
+            },
+        })
+
+    return {"branches": branches}
 
 
 # ── Checkpoints ────────────────────────────────────────────────
@@ -163,8 +202,9 @@ def branch_replay(req: BranchRequest, request: Request):
         raise HTTPException(400, f"Unsupported span_type: {req.span_type}")
 
     # ── Replay ─────────────────────────────────────────────────
+    branch_id = f"branch_{uuid.uuid4().hex[:12]}"
     try:
-        with replay_trace(full_config, sqlite_path=request.app.state.db_path):
+        with replay_trace(full_config, sqlite_path=request.app.state.db_path, branch_id=branch_id):
             result = replay_branch(
                 graph=graph,
                 config=full_config,
@@ -177,5 +217,6 @@ def branch_replay(req: BranchRequest, request: Request):
     return {
         "status": "ok",
         "thread_id": req.thread_id,
+        "branch_id": branch_id,
         "checkpoint_id": full_config["configurable"].get("checkpoint_id"),
     }

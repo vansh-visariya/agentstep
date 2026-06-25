@@ -31,16 +31,22 @@ def setup_otel(sqlite_path: str = "trace.sqlite"):
 class ReplayCallbackHandler(BaseCallbackHandler):
     """
     A LangChain callback handler that emits OpenTelemetry spans for LLMs and Tools,
-    enriching them with the LangGraph thread_id.
+    enriching them with the LangGraph thread_id and optional branch_id.
     """
-    def __init__(self, thread_id: str):
+    def __init__(self, thread_id: str, branch_id: str | None = None):
         self.thread_id = thread_id
+        self.branch_id = branch_id
         self.tracer = trace.get_tracer("agent-replay")
         self.spans = {}  # run_id -> Span
 
+    def _set_branch_attrs(self, span):
+        span.set_attribute("lg.thread_id", self.thread_id)
+        if self.branch_id:
+            span.set_attribute("lg.branch_id", self.branch_id)
+
     def on_llm_start(self, serialized: dict, prompts: list[str], *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
         span = self.tracer.start_span("llm_call")
-        span.set_attribute("lg.thread_id", self.thread_id)
+        self._set_branch_attrs(span)
         span.set_attribute("gen_ai.system", "langgraph")
         if prompts:
             span.set_attribute("gen_ai.prompt", prompts[0])
@@ -66,7 +72,7 @@ class ReplayCallbackHandler(BaseCallbackHandler):
 
     def on_tool_start(self, serialized: dict, input_str: str, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
         span = self.tracer.start_span("tool_call")
-        span.set_attribute("lg.thread_id", self.thread_id)
+        self._set_branch_attrs(span)
         span.set_attribute("gen_ai.tool.name", serialized.get("name", "unknown_tool"))
         span.set_attribute("gen_ai.tool.input", input_str)
         self.spans[str(run_id)] = span
@@ -86,7 +92,7 @@ class ReplayCallbackHandler(BaseCallbackHandler):
             del self.spans[str(run_id)]
 
 @contextmanager
-def replay_trace(config: dict, sqlite_path: str = "trace.sqlite"):
+def replay_trace(config: dict, sqlite_path: str = "trace.sqlite", branch_id: str | None = None):
     """
     Context manager to wrap LangGraph executions and inject the OTel callback handler.
     Example:
@@ -98,7 +104,7 @@ def replay_trace(config: dict, sqlite_path: str = "trace.sqlite"):
     
     thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
     
-    handler = ReplayCallbackHandler(thread_id)
+    handler = ReplayCallbackHandler(thread_id, branch_id=branch_id)
     
     # Inject the handler into the config's callbacks
     callbacks = config.get("callbacks", [])
