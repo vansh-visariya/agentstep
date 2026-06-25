@@ -51,7 +51,7 @@ export default function App() {
         body: JSON.stringify({
           thread_id: activeThread,
           checkpoint_id: checkpointId,
-          node_name: 'tool_node', // Typically the tool node name in LangGraph
+          node_name: 'tools', // Name of the node in the LangGraph that processes tools
           tool_call_id: toolCallId,
           new_output: replayOutput
         })

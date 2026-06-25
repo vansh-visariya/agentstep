@@ -30,23 +30,31 @@ from langchain_core.runnables import RunnableConfig
 
 def call_model(state: State, config: RunnableConfig):
     # Mocking the model deciding to call the tool
-    # Check if there's already a tool response, if so, end.
     messages = state["messages"]
     last_message = messages[-1]
     
+    from agent_replay.sdk.tracer import trace
+    tracer = trace.get_tracer("agent-replay")
+    thread_id = config.get("configurable", {}).get("thread_id")
+    
     if last_message.type == "tool":
         # The tool was called, return final response
-        return {"messages": [AIMessage(content=f"The weather is: {last_message.content}")]}
+        content = f"The weather is: {last_message.content}"
+        
+        # Manually emit OTel span for final response
+        with tracer.start_as_current_span("llm_call") as span:
+            span.set_attribute("lg.thread_id", thread_id)
+            span.set_attribute("gen_ai.system", "langgraph")
+            span.set_attribute("gen_ai.prompt", "Tool output received")
+            span.set_attribute("gen_ai.completion", content)
+            
+        return {"messages": [AIMessage(content=content)]}
     
     # Otherwise, call the tool
     tool_call = ToolCall(name="get_weather", args={"location": "San Francisco"}, id="call_123")
     ai_msg = AIMessage(content="", tool_calls=[tool_call])
     
-    # We will manually emit OTel spans here to simulate what the CallbackHandler would do
-    # because the Fake model won't trigger the LangChain callbacks automatically.
-    from agent_replay.sdk.tracer import trace
-    tracer = trace.get_tracer("agent-replay")
-    thread_id = config.get("configurable", {}).get("thread_id")
+    # Manually emit OTel span for tool call request
     with tracer.start_as_current_span("llm_call") as span:
         span.set_attribute("lg.thread_id", thread_id)
         span.set_attribute("gen_ai.system", "langgraph")

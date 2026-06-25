@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+#sqlite
+trace.sqlite
+trace.sqlite-shm
+trace.sqlite-wal

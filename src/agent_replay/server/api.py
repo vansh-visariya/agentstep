@@ -84,6 +84,12 @@ def branch_replay(req: BranchRequest, request: Request):
         }
     }
     
+    # Fetch full config to ensure we have checkpoint_ns, etc.
+    snapshot = graph.get_state(config)
+    full_config = snapshot.config
+    if "checkpoint_ns" not in full_config["configurable"]:
+        full_config["configurable"]["checkpoint_ns"] = ""
+        
     # Construct the overridden message
     # In LangGraph, to update a specific message, you typically provide it with its ID.
     # Alternatively, for ToolMessages, providing the tool_call_id updates it if the reducer matches by tool_call_id or id.
@@ -95,7 +101,7 @@ def branch_replay(req: BranchRequest, request: Request):
     try:
         new_state = replay_branch(
             graph=graph,
-            config=config,
+            config=full_config,
             node_name=req.node_name,
             new_values={"messages": [overridden_msg]}
         )

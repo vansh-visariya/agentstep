@@ -8,6 +8,7 @@ import os
 import sys
 
 from agent_replay.server.api import app
+from agent_replay.sdk.tracer import setup_otel
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 def parse_app_string(app_str: str):
@@ -48,9 +49,10 @@ def main():
         print(f"Failed to load graph: {e}")
         sys.exit(1)
         
-    # 2. Setup SQLite connection
+    # 2. Setup SQLite connection and OTel
     print(f"Connecting to {args.db}...")
     conn = sqlite3.connect(args.db, check_same_thread=False)
+    setup_otel(args.db)
     
     # Ensure LangGraph tables exist
     checkpointer = SqliteSaver(conn)
