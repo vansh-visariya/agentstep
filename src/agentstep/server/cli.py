@@ -20,7 +20,7 @@ def _resolve_ui_build() -> Path | None:
     # We want <repo>/ui/dist — three levels up from this file.
     here = Path(__file__).resolve().parent
     candidates = [
-        here.parents[3] / "ui" / "dist",   # repo-rooted: src/agentstep/server -> src/agentstep -> src -> repo
+        here.parents[2] / "ui" / "dist",   # repo-rooted: src/agentstep/server -> src/agentstep -> src -> repo
         Path.cwd() / "ui" / "dist",
         Path.cwd() / "dist",
     ]
@@ -91,11 +91,6 @@ def main():
     )
     parser.add_argument("--port", type=int, default=7337, help="Port to serve on")
     parser.add_argument(
-        "--no-ui", action="store_true",
-        help="Do not serve the bundled UI. Use this when the Vite dev server "
-             "is running on :5173 with its own proxy to /api/*.",
-    )
-    parser.add_argument(
         "--dev-ui", action="store_true",
         help="Backend-only mode for development. Disables the bundled UI. "
              "Start the Vite dev server separately (cd ui && npm run dev).",
@@ -127,15 +122,14 @@ def main():
     app.state.checkpointer = checkpointer
 
     if args.dev_ui:
-        args.no_ui = True
         print(
             "Dev UI mode: bundled UI disabled.\n"
             "  Start the Vite dev server in another terminal:\n"
             "    cd ui && npm install && npm run dev\n"
             "  Then open http://localhost:5173"
         )
-
-    if not args.no_ui:
+    
+    if not args.dev_ui:
         ui_path = _resolve_ui_build()
         if ui_path is not None:
             print(f"Serving UI from {ui_path}")

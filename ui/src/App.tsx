@@ -138,6 +138,7 @@ export default function App() {
   const [branches, setBranches] = useState<BranchGroup[]>([]);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [selectedSpan, setSelectedSpan] = useState<Span | null>(null);
+  const [selectedRow, setSelectedRow] = useState<{ branchId: string; rowIndex: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -189,6 +190,7 @@ export default function App() {
       setBranches(trace.branches ?? []);
       setCheckpoints(check);
       setSelectedSpan(null);
+      setSelectedRow(null);
       setFocusBranchId(null);
       const branchCount = (trace.branches ?? []).filter((b: BranchGroup) => !b.is_original).length;
       setThreadBranchCounts(prev => ({ ...prev, [threadId]: branchCount }));
@@ -268,24 +270,17 @@ export default function App() {
     });
   };
 
-  // Derived: index of the currently focused branch (for inspector breadcrumb chip color)
-  const focusedIndex = useMemo(() => {
-    if (!focusBranchId) return 0;
-    const idx = branches.findIndex(b => b.branch_id === focusBranchId);
-    return idx >= 0 ? idx : 0;
-  }, [focusBranchId, branches]);
-
   // Span counter for inspector breadcrumb
   const selectedStepIndex = useMemo(() => {
-    if (!selectedSpan) return null;
-    let i = 0;
-    for (const b of branches) {
-      const found = b.spans.findIndex(s => s.span_id === selectedSpan.span_id);
-      if (found >= 0) return { step: found + 1, total: b.spans.length, branchIdx: branches.indexOf(b) };
-      i += b.spans.length;
-    }
-    return null;
-  }, [selectedSpan, branches]);
+    if (!selectedSpan || !selectedRow) return null;
+    const branchIdx = branches.findIndex(b => b.branch_id === selectedRow.branchId);
+    if (branchIdx < 0) return null;
+    const branch = branches[branchIdx];
+    if (selectedRow.rowIndex < 0 || selectedRow.rowIndex >= branch.spans.length) return null;
+    const rowSpan = branch.spans[selectedRow.rowIndex];
+    if (!rowSpan || rowSpan.span_id !== selectedSpan.span_id) return null;
+    return { step: selectedRow.rowIndex + 1, total: branch.spans.length, branchIdx };
+  }, [selectedSpan, selectedRow, branches]);
 
   // ── render ────────────────────────────────────────────────
   return (
@@ -447,10 +442,11 @@ export default function App() {
                       color={color}
                       isOriginal={isOriginal}
                       isCollapsed={isCollapsed}
-                      selectedSpanId={selectedSpan?.span_id ?? null}
+                      selectedRow={selectedRow}
                       onToggleCollapse={() => toggleCollapse(branch.branch_id)}
-                      onSelectSpan={(s) => {
+                      onSelectSpan={(s, rowIndex) => {
                         setSelectedSpan(s);
+                          setSelectedRow({ branchId: branch.branch_id, rowIndex });
                         setFocusBranchId(branch.branch_id);
                       }}
                     />
@@ -575,16 +571,16 @@ export default function App() {
 
 function BranchBlock({
   branch, index, color, isOriginal, isCollapsed,
-  selectedSpanId, onToggleCollapse, onSelectSpan,
+  selectedRow, onToggleCollapse, onSelectSpan,
 }: {
   branch: BranchGroup;
   index: number;
   color: C;
   isOriginal: boolean;
   isCollapsed: boolean;
-  selectedSpanId: string | null;
+  selectedRow: { branchId: string; rowIndex: number } | null;
   onToggleCollapse: () => void;
-  onSelectSpan: (s: Span) => void;
+  onSelectSpan: (s: Span, rowIndex: number) => void;
 }) {
   const branchId = `branch-${branch.branch_id}`;
 
@@ -634,11 +630,11 @@ function BranchBlock({
 
           <div className="space-y-px">
             {branch.spans.map((span, i) => {
-              const selected = span.span_id === selectedSpanId;
+              const selected = selectedRow?.branchId === branch.branch_id && selectedRow.rowIndex === i;
               const isForkAnchor = i === forkIdx;
 
               return (
-                <div key={span.span_id} className="relative">
+                <div key={`${branch.branch_id}-${i}-${span.span_id}`} className="relative">
                   {/* fork marker — small caps label sitting on the rail */}
                   {isForkAnchor && (
                     <div className="absolute -left-[24px] top-0 z-10">
@@ -656,8 +652,8 @@ function BranchBlock({
                   )}
 
                   <button
-                    id={span.span_id}
-                    onClick={() => onSelectSpan(span)}
+                    id={`${branch.branch_id}-${i}-${span.span_id}`}
+                    onClick={() => onSelectSpan(span, i)}
                     className="relative w-full text-left flex items-center gap-3 py-2 px-2 transition-colors"
                     style={{
                       background: selected ? color.bg : 'transparent',
