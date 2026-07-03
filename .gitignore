@@ -1,17 +1,42 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
 build/
 dist/
-wheels/
-*.egg-info
+eggs/
+.eggs/
+*.whl
 
 # Virtual environments
-.venv
-.env 
-.commandcode
+venv/
+.venv/
+env/
+.env
 
-#sqlite
-trace.sqlite
-trace.sqlite-shm
-trace.sqlite-wal
+# Node / UI
+node_modules/
+ui/dist/
+ui/node_modules/
+
+# Traces (user data, not source)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env.local
+.commandcode

@@ -1,6 +1,6 @@
-# Agent Step
+# AgentStep
 
-A time-travel debugger and branch explorer for **[LangGraph](https://langchain-ai.github.io/langgraph/)** agents. Capture every LLM call and tool invocation as a span, browse them in a web timeline, then **branch from any point** — override the output and replay to see how the rest of the graph would behave differently.
+A time-travel debugger and branch explorer for **[LangGraph](https://langchain-ai.github.io/langgraph/)** agents. Capture every LLM call, retriever query, graph node execution, agent reasoning step, and tool invocation as a span — browse them in a web timeline, then **branch from any point** to override the output and replay how the rest of the graph would behave differently.
 
 Think `pdb` + a REPL for agent workflows, with a SQLite file you can hand to a teammate.
 
@@ -27,8 +27,8 @@ pip install agentstep
 Or from the repo (development):
 
 ```bash
-git clone https://github.com/vanshvisariya/agent-replay
-cd agent-replay
+git clone https://github.com/vanshvisariya/agentstep
+cd agentstep
 pip install -e .
 ```
 
@@ -46,7 +46,7 @@ The SDK exposes one thing: `replay_trace`, a context manager that instruments yo
 
 ```python
 from langgraph.graph import StateGraph, START, END
-from agent_replay.sdk.tracer import replay_trace
+from agentstep.sdk.tracer import replay_trace
 
 # build your compiled graph the way you already do
 graph = ...
@@ -63,7 +63,7 @@ That's the entire API surface for instrumentation. The context manager:
 
 1. Sets up an OpenTelemetry tracer pointed at your SQLite file.
 2. Injects a callback handler into `config["callbacks"]`.
-3. Records every `llm_call` and `tool_call` span with timing, prompts, completions, and outputs.
+3. Records every span — LLM calls, retriever queries, graph node runs, agent reasoning steps, and tool invocations — with timing, prompts, completions, and outputs.
 
 The original `config` is mutated in place; you don't need to swap it back.
 
@@ -98,17 +98,23 @@ The original trace stays intact. The fork becomes a new branch in the timeline, 
 
 ## What gets captured
 
-| Span type | What's recorded |
-|---|---|
-| `llm_call` | prompt, completion, system, input/output token counts, wall time |
-| `tool_call` | tool name, input string, output string, wall time |
+AgentStep records **6 span types** via LangChain/LangGraph callbacks:
+
+| Span type | Events | What's recorded |
+|---|---|---|
+| `llm_call` | start / end | prompt, completion, system, input/output token counts |
+| `chat_model_call` | start / end | provider name, first message preview, message count, completion, token usage |
+| `retriever_call` | start / end / error | query text, document count, first doc preview (500 chars), metadata keys |
+| `node_run` | start / end / error | node name, input/output key names (state flow) |
+| `agent_step` | action / finish | tool chosen, tool input, reasoning log preview (300 chars) |
+| `tool_call` | start / end / error | tool name, input string, output string |
 
 Every span carries:
 
 - `lg.thread_id` — the LangGraph `thread_id` so spans from one conversation group together.
 - `lg.branch_id` — set automatically on spans created during a branch replay, so the debugger can group them separately.
 
-Other graph node executions, sub-graphs, and conditional edges are not yet instrumented as spans — but the checkpoint data is still preserved by LangGraph itself, so branch replay works regardless.
+> **Why two LLM span types?** Modern LangChain routes chat models through `on_chat_model_*` callbacks separately from legacy `on_llm_*`. Without this handler, all your chat model calls would be invisible to AgentStep.
 
 ---
 
@@ -117,14 +123,14 @@ Other graph node executions, sub-graphs, and conditional edges are not yet instr
 The repo ships a runnable demo (`sample.py`) with a fake LLM so you don't need any API keys:
 
 ```bash
-git clone https://github.com/vanshvisariya/replay
-cd agent-replay
+git clone https://github.com/vanshvisariya/agentstep
+cd agentstep
 pip install -e .
 python sample.py                              # writes trace.sqlite
 replay-debugger trace.sqlite --app sample:graph
 ```
 
-Then open <http://localhost:7337>. Click the LLM call → click **branch from here** → change the response → watch the timeline fork.
+Then open <http://localhost:7337>. Click any span type → click **branch from here** → change the response → watch the timeline fork.
 
 ---
 
@@ -148,21 +154,20 @@ Open <http://localhost:5173> instead. Edits to React files hot-reload; backend e
 
 ## Programmatic branch replay
 
-The web UI is the main way to branch, but the same operation is available as a function for scripted use:
+The web UI is the main way to branch, but `replay_branch` is also available for scripted use:
 
 ```python
-from agent_replay.server.replayer import replay_branch
+from agentstep.server.replayer import replay_branch
+from langchain_core.messages import AIMessage
 
+# Resume from a checkpoint with overridden state.
 result = replay_branch(
-    thread_id="user-42",
-    checkpoint_id="1efb...",          # from GET /api/traces/{tid}/checkpoints
-    node_name="tools",                 # or "agent"
-    span_type="tool_call",             # or "llm_call"
-    tool_call_id="get_weather",        # tool name for tool spans
-    new_output="It's snowing in SF.",
-    db_path="trace.sqlite",
+    graph=graph,
+    config={"configurable": {"thread_id": "user-42", "checkpoint_id": "..."}},
+    node_name="agent",
+    new_values={"messages": [AIMessage(content="The weather is sunny.")]},
 )
-print(result)  # branch_id of the new replay
+# result contains the final state of the branched execution.
 ```
 
 Useful for regression tests, CI, or batch-exploration of failure modes.
@@ -203,12 +208,11 @@ After running the demo once:
 
 ```
 trace.sqlite
-├── spans table        ← every llm_call / tool_call, with start/end nanoseconds + JSON attributes
-├── checkpoints table  ← LangGraph state snapshots (one per node execution)
+├── otel_spans table   ← every span (6 types), with start/end nanoseconds + JSON attributes
 └── thread metadata    ← implicit, keyed off lg.thread_id in span attributes
 ```
 
-Everything is one file. Copy it, share it, commit it for reproduction.
+Everything is one file. Copy it, share it, commit it for reproduction. Checkpoints are queried live from LangGraph's checkpointer, not stored in the trace file directly.
 
 ---
 
@@ -217,15 +221,15 @@ Everything is one file. Copy it, share it, commit it for reproduction.
 - **Python 3.13+ only** — pinned in `pyproject.toml`.
 - **LangGraph checkpointers must use SQLite** — `SqliteSaver` is the only supported backend currently; the branch endpoint reads from the same file the tracer wrote to.
 - **No remote export** — spans stay local. (The exporter is OpenTelemetry-native, so wiring Jaeger/Zipkin out the side is doable but not built in.)
-- **Two span types** — only LLM and tool calls. If you want full graph-node tracing, file an issue.
+- **No streaming token events** — only start/end boundaries are captured per span. Token-level latency requires a future extension.
 
 ---
 
 ## Contributing
 
 ```bash
-git clone https://github.com/vanshvisariya/agent-replay
-cd agent-replay
+git clone https://github.com/vanshvisariya/agentstep
+cd agentstep
 pip install -e .
 cd ui && npm install
 ```
@@ -233,9 +237,9 @@ cd ui && npm install
 Layout:
 
 ```
-src/agent_replay/
+src/agentstep/
 ├── sdk/
-│   ├── tracer.py        ← replay_trace() + ReplayCallbackHandler
+│   ├── tracer.py        ← replay_trace() + ReplayCallbackHandler (6 span types)
 │   └── exporter.py      ← OTel span exporter → SQLite
 └── server/
     ├── api.py           ← FastAPI endpoints

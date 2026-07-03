@@ -15,14 +15,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 
 def _resolve_ui_build() -> Path | None:
-    """Walk up from the package dir looking for ui/dist, then try CWD."""
-    # The package lives at <repo>/src/agentstep/server/cli.py
-    # We want <repo>/ui/dist — three levels up from this file.
+    """Find the bundled React UI. Checks package-local first, then source repo layout."""
     here = Path(__file__).resolve().parent
     candidates = [
-        here.parents[2] / "ui" / "dist",   # repo-rooted: src/agentstep/server -> src/agentstep -> src -> repo
-        Path.cwd() / "ui" / "dist",
-        Path.cwd() / "dist",
+        here / "ui_dist",                                          # bundled inside installed package
+        here.parents[2] / "ui" / "dist",                           # source repo layout
+        Path.cwd() / "ui" / "dist",                                # CWD fallback
+        Path.cwd() / "dist",                                       # CWD fallback
     ]
     for p in candidates:
         if (p / "index.html").is_file():

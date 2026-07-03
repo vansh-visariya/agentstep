@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
-  Play, Code, Clock, Edit3, GitBranch,
+  Play, Code, Clock, Edit3, GitBranch, Database,
   Loader2, AlertCircle, ChevronDown, ChevronRight,
   X, RefreshCw, Hash, Layers,
 } from 'lucide-react';
@@ -54,24 +54,82 @@ function c(i: number): C { return PAL[i % PAL.length]; }
 
 // ── helpers ──────────────────────────────────────────────────
 
-function getNodeIcon(name: string) {
-  if (name === 'tool_call') return <Code size={12} />;
-  return <Play size={12} />;
+function getSpanTypeIcon(name: string) {
+  switch (name) {
+    case 'tool_call':       return <Code size={12} />;
+    case 'retriever_call':  return <Database size={12} />;
+    case 'node_run':        return <GitBranch size={12} />;
+    case 'agent_step':      return <Layers size={12} />;
+    case 'chat_model_call':
+    case 'llm_call':        return <Play size={12} />;
+    default:                return <Clock size={12} />;
+  }
+}
+
+function spanTypeLabel(name: string): { display: string; tag: string; colorIdx: number } {
+  switch (name) {
+    case 'tool_call':       return { display: 'Tool Call', tag: 'tool', colorIdx: 4 };
+    case 'retriever_call':  return { display: 'Retriever Call', tag: 'retrieval', colorIdx: 2 };
+    case 'node_run':        return { display: 'Node Run', tag: 'node', colorIdx: 0 };
+    case 'agent_step':      return { display: 'Agent Step', tag: 'step', colorIdx: 1 };
+    case 'chat_model_call': return { display: 'Chat Model Call', tag: 'model', colorIdx: 3 };
+    case 'llm_call':        return { display: 'LLM Call', tag: 'agent', colorIdx: 0 };
+    default:                return { display: name, tag: 'unknown', colorIdx: -1 };
+  }
+}
+
+// Color tint for span type labels (overrides branch coloring when set).
+const TYPE_COLOR: Record<string, string> = {
+  'tool_call': 'var(--color-b4)',
+  'retriever_call': 'var(--color-b2)',
+  'node_run': 'var(--color-b0)',
+  'agent_step': 'var(--color-orig)',
+  'chat_model_call': 'var(--color-b1)',
+  'llm_call': 'var(--color-b0)',
+};
+
+function spanLabel(span: Span): string {
+  switch (span.name) {
+    case 'tool_call':
+      return span.attributes?.['gen_ai.tool.name'] ?? '(tool)';
+    case 'retriever_call':
+      const q = String(span.attributes?.['gen_ai.query'] ?? '');
+      return `query: ${q.slice(0, 80)}`;
+    case 'node_run':
+      return span.attributes?.['gen_ai.node.name'] ?? '(node)';
+    case 'agent_step':
+      return `tool: ${span.attributes?.['gen_ai.agent.tool'] ?? '?'}`;
+    case 'chat_model_call':
+    case 'llm_call':
+      if (span.attributes?.['gen_ai.completion'])
+        return String(span.attributes['gen_ai.completion']).slice(0, 88);
+      return span.attributes?.['gen_ai.system'] ?? '(model)';
+    default:
+      return String(span.name);
+  }
 }
 
 function findCheckpointForSpan(
   span: Span,
   checkpoints: Checkpoint[],
 ): Checkpoint | null {
-  if (span.name === 'tool_call') {
-    return checkpoints.find((cp) => cp.next.includes('tools')) ?? checkpoints[0] ?? null;
+  switch (span.name) {
+    case 'tool_call':
+    case 'agent_step':
+      return checkpoints.find((cp) => cp.next.includes('tools')) ?? checkpoints[0] ?? null;
+    case 'llm_call':
+    case 'chat_model_call':
+      return checkpoints.find((cp) => cp.next.includes('agent'))
+        ?? checkpoints[checkpoints.length - 1]
+        ?? null;
+    case 'retriever_call':
+      return checkpoints.find((cp) => cp.next.some((n: string) => !['tools', 'agent'].includes(n)))
+        ?? checkpoints[0] ?? null;
+    case 'node_run':
+      return checkpoints[checkpoints.length - 1] ?? null;
+    default:
+      return checkpoints[0] ?? null;
   }
-  if (span.name === 'llm_call') {
-    return checkpoints.find((cp) => cp.next.includes('agent'))
-      ?? checkpoints[checkpoints.length - 1]
-      ?? null;
-  }
-  return checkpoints[0] ?? null;
 }
 
 function formatDuration(start: number, end: number): string {
@@ -81,14 +139,6 @@ function formatDuration(start: number, end: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function spanLabel(span: Span): string {
-  if (span.name === 'tool_call') return span.attributes?.['gen_ai.tool.name'] ?? '(tool)';
-  return span.attributes?.['gen_ai.completion']
-    ? String(span.attributes['gen_ai.completion']).slice(0, 88)
-    : span.attributes?.['gen_ai.system'] ?? '(llm)';
-}
-
-// "orig", "b0", "b1" — the small caps chip that replaces icons in the row
 function branchChipLabel(index: number, isOriginal: boolean) {
   if (isOriginal) return 'orig';
   return `b${index - 1}`;
@@ -213,8 +263,24 @@ export default function App() {
       setBranchError('No matching checkpoint found for this span');
       return;
     }
-    const nodeName = selectedSpan.name === 'tool_call' ? 'tools' : 'agent';
-    const toolName = selectedSpan.attributes?.['gen_ai.tool.name'] ?? '';
+    let nodeName: string;
+    let toolName: string;
+    switch (selectedSpan.name) {
+      case 'tool_call':
+      case 'agent_step':
+        nodeName = 'tools';
+        toolName = selectedSpan.attributes?.['gen_ai.tool.name']
+          ?? String(selectedSpan.attributes?.['gen_ai.agent.tool'] ?? '');
+        break;
+      case 'llm_call':
+      case 'chat_model_call':
+        nodeName = 'agent';
+        toolName = '';
+        break;
+      default:
+        nodeName = selectedSpan.attributes?.['gen_ai.node.name'] ?? 'tools';
+        toolName = '';
+    }
 
     setBranching(true);
     setBranchError(null);
@@ -252,10 +318,21 @@ export default function App() {
 
   const openBranchModal = () => {
     if (!selectedSpan) return;
-    const initialOutput =
-      selectedSpan.attributes?.['gen_ai.tool.output']
-      ?? selectedSpan.attributes?.['gen_ai.completion']
-      ?? '';
+    let initialOutput: string;
+    switch (selectedSpan.name) {
+      case 'tool_call':
+        initialOutput = String(selectedSpan.attributes?.['gen_ai.tool.output'] ?? '');
+        break;
+      case 'llm_call':
+      case 'chat_model_call':
+        initialOutput = String(selectedSpan.attributes?.['gen_ai.completion'] ?? '');
+        break;
+      case 'retriever_call':
+        initialOutput = String(selectedSpan.attributes?.['gen_ai.retriever.first_doc_preview'] ?? '');
+        break;
+      default:
+        initialOutput = '';
+    }
     setReplayOutput(initialOutput);
     setBranchError(null);
     setBranchResult(null);
@@ -678,36 +755,40 @@ function BranchBlock({
                     {/* icon */}
                     <span
                       className="mono text-[10px] w-3 flex items-center justify-center"
-                      style={{ color: 'var(--color-mute)' }}
+                      style={{ color: TYPE_COLOR[span.name] ?? 'var(--color-mute)' }}
                     >
-                      {getNodeIcon(span.name)}
+                      {getSpanTypeIcon(span.name)}
                     </span>
 
                     {/* name + label */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="mono text-[11px] font-semibold uppercase tracking-wide"
-                          style={{ color: span.name === 'tool_call' ? 'var(--color-b4)' : 'var(--color-b0)' }}
-                        >
-                          {span.name === 'tool_call' ? 'Tool Call' : 'LLM Call'}
-                        </span>
-                        <span
-                          className="mono text-[10px] px-1"
-                          style={{
-                            color: 'var(--color-mute)',
-                            border: '1px solid var(--color-ink-3)',
-                          }}
-                        >
-                          {span.name === 'tool_call' ? 'tool' : 'agent'}
-                        </span>
-                      </div>
-                      <div
-                        className="mono text-[11px] truncate mt-0.5"
-                        style={{ color: 'var(--color-text-dim)' }}
-                      >
-                        {spanLabel(span)}
-                      </div>
+                      {(() => { const st = spanTypeLabel(span.name); return (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="mono text-[11px] font-semibold uppercase tracking-wide"
+                              style={{ color: TYPE_COLOR[span.name] ?? 'var(--color-mute)' }}
+                            >
+                              {st.display}
+                            </span>
+                            <span
+                              className="mono text-[10px] px-1"
+                              style={{
+                                color: 'var(--color-mute)',
+                                border: '1px solid var(--color-ink-3)',
+                              }}
+                            >
+                              {st.tag}
+                            </span>
+                              </div>
+                          <div
+                            className="mono text-[11px] truncate mt-0.5"
+                            style={{ color: 'var(--color-text-dim)' }}
+                          >
+                            {spanLabel(span)}
+                          </div>
+                        </>
+                      ); })()}
                     </div>
 
                     {/* duration */}
@@ -742,10 +823,32 @@ function Inspector({
   onBranch: () => void;
 }) {
   const color = c(branchIndex);
+  const st = spanTypeLabel(span.name);
   const isTool = span.name === 'tool_call';
-  const toolName = span.attributes?.['gen_ai.tool.name'];
+
+  // Type-specific output data.
   const completion = span.attributes?.['gen_ai.completion'];
-  const output = span.attributes?.['gen_ai.tool.output'];
+  const toolOutput = span.attributes?.['gen_ai.tool.output'];
+  const retrieverPreview = span.attributes?.['gen_ai.retriever.first_doc_preview'];
+  const retrieverDocCount = span.attributes?.['gen_ai.retriever.document_count'];
+  const agentTool = span.attributes?.['gen_ai.agent.tool'];
+  const agentLog = span.attributes?.['gen_ai.agent.log_preview'];
+
+  // Output content and eyebrow label by type.
+  let outputSection: { label: string; content: string | null } | null = null;
+  if (isTool && toolOutput) outputSection = { label: 'Tool Output', content: toolOutput };
+  else if ((span.name === 'llm_call' || span.name === 'chat_model_call') && completion)
+    outputSection = { label: 'Completion', content: completion };
+  else if (retrieverDocCount !== undefined) {
+    const lines: string[] = [`documents returned: ${retrieverDocCount}`];
+    if (retrieverPreview) lines.push(retrieverPreview);
+    outputSection = { label: 'Retrieval Result', content: lines.join('\n\n') };
+  } else if (agentTool || agentLog) {
+    const lines: string[] = [];
+    if (agentTool) lines.push(`tool: ${agentTool}`);
+    if (agentLog) lines.push(agentLog);
+    outputSection = { label: 'Agent Decision', content: lines.join('\n\n') };
+  }
 
   return (
     <div className="p-5 space-y-5">
@@ -763,15 +866,10 @@ function Inspector({
       <div className="flex items-baseline gap-2">
         <span
           className="mono text-[14px] font-semibold uppercase tracking-wide"
-          style={{ color: isTool ? 'var(--color-b4)' : 'var(--color-b0)' }}
+          style={{ color: TYPE_COLOR[span.name] ?? 'var(--color-mute)' }}
         >
-          {isTool ? 'tool_call' : 'llm_call'}
+          {st.display}
         </span>
-        {isTool && toolName && (
-          <span className="mono text-[12px]" style={{ color: 'var(--color-text)' }}>
-            {toolName}
-          </span>
-        )}
       </div>
 
       <button
@@ -847,9 +945,9 @@ function Inspector({
       </section>
 
       {/* Output preview */}
-      {(output || completion) && (
+      {outputSection && (
         <section className="space-y-2">
-          <Eyebrow>{isTool ? 'Tool Output' : 'Completion'}</Eyebrow>
+          <Eyebrow>{outputSection.label}</Eyebrow>
           <pre
             className="mono text-[11px] leading-relaxed p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
             style={{
@@ -858,7 +956,7 @@ function Inspector({
               border: '1px solid var(--color-ink-3)',
             }}
           >
-            {(isTool ? output : completion) as string}
+            {outputSection.content}
           </pre>
         </section>
       )}

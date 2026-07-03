@@ -1,6 +1,6 @@
 [project]
 name = "agentstep"
-version = "0.1.1"
+version = "0.1.2"
 description = "Time-travel debugger and branch explorer for LangGraph AI agents. Capture execution traces, inspect LLM and tool calls, and branch from any point with overridden outputs."
 readme = "README.md"
 license = "MIT"

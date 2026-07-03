@@ -1,7 +1,7 @@
 import sqlite3
 import json
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ class BranchRequest(BaseModel):
     thread_id: str
     checkpoint_id: str
     node_name: str
-    span_type: str
+    span_type: Literal["tool_call", "llm_call", "retriever_call", "node_run", "agent_step", "chat_model_call"]
     tool_call_id: Optional[str] = None  # tool *name* sent by the UI
     new_output: str
 
@@ -149,11 +149,7 @@ def branch_replay(req: BranchRequest, request: Request):
 
     full_config = snapshot.config
 
-    # Ensure checkpoint_ns is present — LangGraph requires it when
-    # resuming from a checkpoint.
-    full_config.setdefault("configurable", {})
-    if "checkpoint_ns" not in full_config["configurable"]:
-        full_config["configurable"]["checkpoint_ns"] = ""
+    # checkpoint_ns is handled inside replay_branch() — one source of truth.
 
     # ── Resolve real tool_call_id ──────────────────────────────
     # The UI sends the tool *name* (e.g. "get_weather") as
@@ -197,6 +193,47 @@ def branch_replay(req: BranchRequest, request: Request):
     elif req.span_type == "llm_call":
         overridden_msg = AIMessage(content=req.new_output)
         node = req.node_name or "agent"
+
+    elif req.span_type == "chat_model_call":
+        # Same as llm_call: override the AI message from chat model response.
+        overridden_msg = AIMessage(content=req.new_output)
+        node = req.node_name or "agent"
+
+    elif req.span_type in ("retriever_call", "agent_step"):
+        # Retrievers and agent steps both map to tool-call-style branching:
+        # we override the ToolMessage that carries the retrieval/tool result.
+        tool_name = (req.tool_call_id or "") if req.span_type == "agent_step" else ""
+        messages = snapshot.values.get("messages", [])
+        real_tool_call_id = None
+
+        for msg in reversed(messages):
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    name = tc.get("name", tc.name) if isinstance(tc, dict) else getattr(tc, "name", "")
+                    if name == tool_name:
+                        real_tool_call_id = tc.get("id", tc.id) if isinstance(tc, dict) else getattr(tc, "id", None)
+                        break
+                if real_tool_call_id:
+                    break
+
+        # For retriever_call without a specific tool name, pick the last ToolMessage.
+        if not real_tool_call_id and req.span_type == "retriever_call":
+            for msg in reversed(messages):
+                if isinstance(msg, ToolMessage):
+                    real_tool_call_id = getattr(msg, "tool_call_id", None) or (msg.tool_call_id if hasattr(msg, 'tool_call_id') else None)
+                    # Use the attribute directly
+                    break
+
+        overridden_msg = ToolMessage(
+            content=req.new_output,
+            tool_call_id=real_tool_call_id or "",
+        )
+        node = req.node_name or ("tools" if req.span_type == "agent_step" else "retrieval")
+
+    elif req.span_type == "node_run":
+        # Branch from a specific graph node by injecting an AIMessage.
+        overridden_msg = AIMessage(content=req.new_output)
+        node = req.node_name
 
     else:
         raise HTTPException(400, f"Unsupported span_type: {req.span_type}")
